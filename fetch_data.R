@@ -5,7 +5,11 @@ library(glue)
 library(feather)
 library(curl)
 
-daily_dir <- "csse_covid_19_daily_reports"
+tmp <- tempfile()
+curl_download("https://codeload.github.com/CSSEGISandData/COVID-19/tar.gz/master", tmp) 
+untar(tmp, files = "COVID-19-master/csse_covid_19_data/csse_covid_19_daily_reports")
+
+daily_dir <- "COVID-19-master/csse_covid_19_data/csse_covid_19_daily_reports"
 
 daily <- dir(daily_dir, "csv") %>% 
   paste0(daily_dir, "/", .) %>% 
@@ -88,3 +92,5 @@ daily %>%
   inner_join(geo %>% select(key, Country, Province, County), by = c("Country", "Province", "County")) %>% 
   select(-Lat, -Long, -Country, -Province, -County) %>% 
   write_feather("data.feather")
+
+rm(by_country, by_province, by_state, by_county, daily, geo, neighbours, daily_dir, cross_keys, tmp)

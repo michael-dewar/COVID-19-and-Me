@@ -158,21 +158,9 @@ ui <- function(request) {
   conditionalPanel("input.unlock_advanced == true",
   fluidRow(
     column(4, numericInput("days", "Number of Days:", value = 7, min = 2, max = 14, step = 1), bookmarkButton()),
-    column(4, selectInput("as_of", "Doubling As Of:", choices = as_of_dates)),
+    column(4, selectInput("as_of", "Doubling As Of:", choices = as_of_dates), actionButton("update_data_button", "Update Data")),
     column(4, selectInput("metric", "Metric:", choices = c("Confirmed", "Deaths", "Recovered", "Active")))
   )),
-  # sidebarLayout(
-  # sidebarPanel(#style = "position:fixed;width:23%",
-  #              "Where do you live?",
-  #              selectInput("user_country", "Country:", choices = countries, selected = "Canada"),
-  #              uiOutput("user_province_ui"),
-  #              uiOutput("user_county_ui"),
-  #              conditionalPanel("input.unlock_advanced == true",
-  #              numericInput("days", "Number of Days:", value = 7, min = 2, max = 14, step = 1),
-  #              selectInput("as_of", "Doubling As Of:", choices = as_of_dates),
-  #              selectInput("metric", "Metric:", choices = c("Confirmed", "Deaths", "Recovered", "Active"))),
-  #              bookmarkButton()),
-  # mainPanel(
   tabsetPanel(
     tabPanel("Near Me",
              p("The ",em("doubling time"), "is the time until the number of cases doubles.  It is better if it takes a long time until we have ",
@@ -213,6 +201,10 @@ ui <- function(request) {
 # Server ------------------------------------------------------------------
 
 server <- function(input, output, session) {
+  
+  observeEvent(input$update_data_button,{
+    source("fetch_data.R")
+  })
   
   provinces <- reactive({
     geo %>% 
