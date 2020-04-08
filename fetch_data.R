@@ -3,6 +3,7 @@ library(readr)
 library(lubridate)
 library(glue)
 library(feather)
+library(curl)
 
 daily_dir <- "csse_covid_19_daily_reports"
 
