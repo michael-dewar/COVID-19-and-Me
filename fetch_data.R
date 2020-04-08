@@ -35,6 +35,39 @@ daily <- dir(daily_dir, "csv") %>%
   summarize(Value = sum(Value, na.rm = TRUE)) %>% 
   ungroup
 
+no_territories <- daily %>% filter(is.na(Province))
+
+territories <- daily %>% 
+  filter(is.na(County) == TRUE, is.na(Province) == FALSE) %>% 
+  filter(!Country %in% c("Australia", "Canada", "China")) %>% 
+  filter(!Province %in% c("Diamond Princess", "Grand Princess", "Recovered")) %>% 
+  mutate(Province = str_replace_all(Province, "\\(Islas Malvinas\\)", "\\(Malvinas\\)")) %>% 
+  mutate(Country = glue("{Province} ({Country})"),
+         Province = NA)
+
+has_prov_state <- daily %>% 
+  filter(Country %in% c("Australia", "Canada", "China") | (Country == "US" & is.na(County) == FALSE) ) 
+
+has_prov_state_aggregated <- daily %>% 
+  filter(Country %in% c("Australia", "Canada", "China", "US")) %>% 
+  group_by(Country, Metric, Date) %>% 
+  summarise(Value = sum(Value, na.rm = TRUE),
+            Lat = mean(Lat, na.rm = TRUE),
+            Long = mean(Long, na.rm = TRUE)) %>% 
+  mutate(Province = "Overall",
+         County = if_else(Country == "US", "US Overall", NA_character_))
+
+aggregated_states <- daily %>% 
+  filter(Country == "US") %>% 
+  group_by(Country, Province, Metric, Date) %>% 
+  summarise(Value = sum(Value, na.rm = TRUE),
+            Lat = mean(Lat, na.rm = TRUE),
+            Long = mean(Long, na.rm = TRUE)) %>% 
+  mutate(County = Province,
+         Province = "Overall")
+
+daily <- bind_rows(has_prov_state, has_prov_state_aggregated, aggregated_states, territories, no_territories)
+
 write_feather(daily, "daily.feather")
 
 geo <- daily %>% 
@@ -94,3 +127,4 @@ daily %>%
   write_feather("data.feather")
 
 rm(by_country, by_province, by_state, by_county, daily, geo, neighbours, daily_dir, cross_keys, tmp)
+rm(has_prov_state, has_prov_state_aggregated, territories, no_territories)

@@ -8,11 +8,6 @@ library(lubridate)
 library(modelr)
 library(gitlink)
 
-data <- read_feather("data.feather")
-geo <- read_feather("geo.feather")
-countries <- geo %>% distinct(Country)  %>% pull
-as_of_dates <- data %>% distinct(Date) %>% arrange(desc(Date)) %>% pull
-
 # Functions ---------------------------------------------------------------
 
 add_doubling_time_to_filtered_df <- function(filtered_df, days = 7){
@@ -48,6 +43,7 @@ plot_doubling_time_by_region <- function(df, metric = NULL, days = 7, as_of = NU
   
   df %>% 
     filter(Metric == metric, Date == as_of) %>% 
+    filter(`Doubling Time` < 50, `Doubling Time`>-20) %>% 
     ggplot(aes(x=fct_reorder(Place, `Doubling Time`, min),
                y = `Doubling Time`,
                fill=highlight)) +
@@ -152,13 +148,14 @@ ui <- function(request) {
   titlePanel("COVID-19 and Me"),
   fluidRow(column(12, "Where do you live?")),
   fluidRow(
-    column(4, selectInput("user_country", "Country:", choices = countries, selected = "Canada")),
+    column(4, uiOutput("user_country_ui")),
     column(4, uiOutput("user_province_ui")),
     column(4, uiOutput("user_county_ui"))),
+  fluidRow(column(12, uiOutput("US_instructions_ui"))),
   conditionalPanel("input.unlock_advanced == true",
   fluidRow(
     column(4, numericInput("days", "Number of Days:", value = 7, min = 2, max = 14, step = 1), bookmarkButton()),
-    column(4, selectInput("as_of", "Doubling As Of:", choices = as_of_dates), actionButton("update_data_button", "Update Data")),
+    column(4, uiOutput("as_of_ui"), uiOutput("update_ui")),
     column(4, selectInput("metric", "Metric:", choices = c("Confirmed", "Deaths", "Recovered", "Active")))
   )),
   tabsetPanel(
@@ -202,23 +199,43 @@ ui <- function(request) {
 
 server <- function(input, output, session) {
   
+  data <- reactiveFileReader(1000*60*3, session, "data.feather", read_feather)
+  geo <- reactiveFileReader(1000*60*3, session, "geo.feather", read_feather) 
+  
+  countries <- reactive({
+    geo() %>% distinct(Country)  %>% pull %>% sort
+  })
+    
+  as_of_dates <- reactive({
+    data() %>% distinct(Date) %>% arrange(desc(Date)) %>% pull
+  })
+  
+  update_in_process <- reactiveVal(FALSE)
   observeEvent(input$update_data_button,{
+    update_in_process(TRUE)
+    updateActionButton(label = "Update in Process...") #Probably won't show
     source("fetch_data.R")
+    updateActionButton(label = "Update Complete") #Probably won't show
   })
   
   provinces <- reactive({
-    geo %>% 
+    req(countries(), input$user_country)
+    geo() %>% 
       filter(Country == input$user_country) %>% 
       distinct(Province) %>% 
       pull
     })
   counties  <- reactive({
     req(provinces(), input$user_province)
-    geo %>% 
+    geo() %>% 
       filter(Country == input$user_country, Province == input$user_province) %>% 
       distinct(County) %>% 
       pull
     })
+  output$user_country_ui <- renderUI({
+    req(countries())
+    selectInput("user_country", "Country:", choices = countries(), selected = "Canada")
+  })
   
   output$user_province_ui <- renderUI({
     req(provinces())
@@ -231,17 +248,46 @@ server <- function(input, output, session) {
   
   output$user_county_ui <- renderUI({
     req(counties())
-    selectInput("user_county", "County:", choices = counties(), selected = c("Alachua"))
+    label <- if(input$user_province == "Overall"){
+      "State (for real this time):"
+    } else{
+      "County:"
+    }
+    selectInput("user_county", label, choices = counties(), selected = c("Alachua"))
+  })
+  
+  output$as_of_ui <- renderUI({
+    selectInput("as_of", "Doubling As Of:", choices = as_of_dates())
+  })
+  
+  output$update_ui <- renderUI({
+    most_recent_in_data <- data() %>% 
+      ungroup %>% 
+      summarize(Date = max(Date)) %>% 
+      pull
+    
+    if(most_recent_in_data < today() -1 & update_in_process() == FALSE){
+      return(actionButton("update_data_button", "Update Data"))
+    } else{
+      return(NULL)
+    }
+    
+  })
+  output$US_instructions_ui <- renderUI({
+    req(input$user_country)
+    if(input$user_country == "US"){
+      p("To compare your state with nearby states, choose ", tags$b("Overall"), " as your state, and then choose your state in the third box.")
+    } else(NULL)
   })
   
   data_to_plot <- reactive({
-    req(input$metric)
-    data <- data %>% filter(Metric == input$metric)
+    req(input$metric, input$user_country, geo())
+    data <- data() %>% filter(Metric == input$metric)
     
     if(input$user_country == "US"){
       req(input$user_province, input$user_county)
       
-      rows <- geo %>% 
+      rows <- geo() %>% 
         filter(Country == input$user_country, Province == input$user_province, County == input$user_county) %>% 
         mutate(highlight = if_else(distance == 0, TRUE, FALSE)) %>% 
         select(type, Country = B_Country, Province = B_Province, County = B_County, key = B_key, Place = B_County, highlight) 
@@ -250,14 +296,14 @@ server <- function(input, output, session) {
     }
     if(input$user_country %in% c("Australia", "Canada", "China")){
       req(input$user_province)
-      rows <- geo %>% 
+      rows <- geo() %>% 
         filter(Country == input$user_country, Province == input$user_province) %>% 
         mutate(highlight = if_else(distance == 0, TRUE, FALSE)) %>% 
         select(type, Country = B_Country, Province = B_Province, County = B_County, key = B_key, Place = B_Province, highlight)
       
       return(data %>% inner_join(rows, by = "key"))
     }
-    rows <- geo %>% 
+    rows <- geo() %>% 
       filter(Country == input$user_country) %>% 
       mutate(highlight = if_else(distance == 0, TRUE, FALSE)) %>% 
       select(type, Country = B_Country, Province = B_Province, County = B_County, key = B_key, Place = B_Country, distance, highlight)
