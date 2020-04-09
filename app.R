@@ -151,12 +151,13 @@ ui <- function(request) {
     column(4, uiOutput("user_country_ui")),
     column(4, uiOutput("user_province_ui")),
     column(4, uiOutput("user_county_ui"))),
-  fluidRow(column(12, uiOutput("US_instructions_ui"))),
+  #fluidRow(column(12, uiOutput("US_instructions_ui"))),
   conditionalPanel("input.unlock_advanced == true",
   fluidRow(
     column(4, numericInput("days", "Number of Days:", value = 7, min = 2, max = 14, step = 1), bookmarkButton()),
     column(4, uiOutput("as_of_ui"), uiOutput("update_ui")),
-    column(4, selectInput("metric", "Metric:", choices = c("Confirmed", "Deaths", "Recovered", "Active")))
+    column(4, selectInput("metric", "Metric:", choices = c("Confirmed", "Deaths", "Recovered", "Active")), 
+              numericInput("num_neighbours", "Number of Neighbours:", value = 20, min = 1, max = 30, step = 1))
   )),
   tabsetPanel(
     tabPanel("Near Me",
@@ -199,8 +200,9 @@ ui <- function(request) {
 
 server <- function(input, output, session) {
   
-  data <- reactiveFileReader(1000*60*3, session, "data.feather", read_feather)
-  geo <- reactiveFileReader(1000*60*3, session, "geo.feather", read_feather) 
+  data <- reactiveFileReader(1000*60*3, session, "data2.feather", read_feather)
+  geo <- reactiveFileReader(1000*60*3, session, "geo2.feather", read_feather) 
+  neighbours <- reactiveFileReader(1000*60*3, session, "neighbours.feather", read_feather) 
   
   countries <- reactive({
     geo() %>% distinct(Country)  %>% pull %>% sort
@@ -212,10 +214,10 @@ server <- function(input, output, session) {
   
   update_in_process <- reactiveVal(FALSE)
   observeEvent(input$update_data_button,{
-    update_in_process(TRUE)
-    updateActionButton(label = "Update in Process...") #Probably won't show
+    updateActionButton(session,  "update_data_button", label = "Update in Process.  Please Do Not Close Browser.")
     source("fetch_data.R")
-    updateActionButton(label = "Update Complete") #Probably won't show
+    update_in_process(TRUE)
+    updateActionButton(session, "update_data_button", label = "Update Complete") #Probably won't show
   })
   
   provinces <- reactive({
@@ -226,7 +228,7 @@ server <- function(input, output, session) {
       pull
     })
   counties  <- reactive({
-    req(provinces(), input$user_province)
+    req(provinces(), input$user_province, input$user_country == "US", input$user_province != "All")
     geo() %>% 
       filter(Country == input$user_country, Province == input$user_province) %>% 
       distinct(County) %>% 
@@ -240,20 +242,18 @@ server <- function(input, output, session) {
   output$user_province_ui <- renderUI({
     req(provinces())
     if(input$user_country %in% c("US", "Australia"))
-      return(selectInput("user_province", "State:", choices = provinces(), selected = c("Florida", "New South Wales")))
+      return(selectInput("user_province", "State:", choices = provinces(), selected = "All"))
     if(input$user_country %in% c("Canada", "China"))
-      return(selectInput("user_province", "Province:", choices = provinces(), selected = c("Quebec", "Zhejiang")))
+      return(selectInput("user_province", "Province:", choices = provinces(), selected = "All"))
     return(NULL)
     })
   
   output$user_county_ui <- renderUI({
     req(counties())
-    label <- if(input$user_province == "Overall"){
-      "State (for real this time):"
-    } else{
-      "County:"
-    }
-    selectInput("user_county", label, choices = counties(), selected = c("Alachua"))
+    if(input$user_country == "US" & input$user_province != "All")
+      return(selectInput("user_county", "County", choices = counties(), selected = "All"))
+    else
+      return(NULL)
   })
   
   output$as_of_ui <- renderUI({
@@ -273,42 +273,72 @@ server <- function(input, output, session) {
     }
     
   })
-  output$US_instructions_ui <- renderUI({
-    req(input$user_country)
-    if(input$user_country == "US"){
-      p("To compare your state with nearby states, choose ", tags$b("Overall"), " as your state, and then choose your state in the third box.")
-    } else(NULL)
+  # output$US_instructions_ui <- renderUI({
+  #   req(input$user_country)
+  #   if(input$user_country == "US"){
+  #     p("To compare your state with nearby states, choose ", tags$b("Overall"), " as your state, and then choose your state in the third box.")
+  #   } else(NULL)
+  # })
+  ready_to_plot <- reactive({
+    req(input$metric, input$user_country, geo(), neighbours(), data())
+    if(!input$user_country %in% c("Australia", "Canada", "China", "US"))
+      return(TRUE)
+    req(input$user_province)
+    if(input$user_country %in% c("Australia", "Canada", "China"))
+      return(TRUE)
+    if(input$user_province == "All")
+      return(TRUE)
+    req(input$user_county)
+    return(TRUE)
   })
   
   data_to_plot <- reactive({
-    req(input$metric, input$user_country, geo())
+    req(ready_to_plot())
+
     data <- data() %>% filter(Metric == input$metric)
+ 
+    if(!input$user_country %in% c("Australia", "Canada", "China", "US"))
+      highlight_key <- glue("{input$user_country}")
+    else if(input$user_province == "All")
+      highlight_key <- glue("{input$user_country}")
+    else if(input$user_country %in% c("Australia", "Canada", "China"))
+      highlight_key <- glue("{input$user_country}, {input$user_province}")
+    else if(input$user_county == "All")
+      highlight_key <- glue("{input$user_country}, {input$user_province}")
+    else
+      highlight_key <- glue("{input$user_country}, {input$user_province}, {input$user_county}")
     
-    if(input$user_country == "US"){
-      req(input$user_province, input$user_county)
-      
-      rows <- geo() %>% 
-        filter(Country == input$user_country, Province == input$user_province, County == input$user_county) %>% 
-        mutate(highlight = if_else(distance == 0, TRUE, FALSE)) %>% 
-        select(type, Country = B_Country, Province = B_Province, County = B_County, key = B_key, Place = B_County, highlight) 
-        
-      return(data %>% inner_join(rows, by = "key"))
-    }
-    if(input$user_country %in% c("Australia", "Canada", "China")){
-      req(input$user_province)
-      rows <- geo() %>% 
-        filter(Country == input$user_country, Province == input$user_province) %>% 
-        mutate(highlight = if_else(distance == 0, TRUE, FALSE)) %>% 
-        select(type, Country = B_Country, Province = B_Province, County = B_County, key = B_key, Place = B_Province, highlight)
-      
-      return(data %>% inner_join(rows, by = "key"))
-    }
-    rows <- geo() %>% 
-      filter(Country == input$user_country) %>% 
-      mutate(highlight = if_else(distance == 0, TRUE, FALSE)) %>% 
-      select(type, Country = B_Country, Province = B_Province, County = B_County, key = B_key, Place = B_Country, distance, highlight)
+    highlight_key <- highlight_key %>% as.character
     
-    return(data %>% inner_join(rows, by = "key"))
+    if(!input$user_country %in% c("Australia", "Canada", "China", "US"))
+      this_type <- "Country"
+    else if(input$user_province == "All")
+      this_type <- "Country"
+    else if(input$user_country %in% c("Canada", "China"))
+      this_type <- "Province"
+    else if(input$user_country == "Australia")
+      this_type <- "State"
+    else if(input$user_county == "All")
+      this_type <- "State"
+    else
+      this_type <- "County"
+    
+    data_key <- neighbours() %>% 
+      filter(key == highlight_key) %>% 
+      arrange(distance) %>% 
+      filter(row_number()<= input$num_neighbours + 1) %>% 
+      pull(neighbour_key)
+    
+    rows <- data() %>% 
+      filter(key %in% data_key) %>% 
+      mutate(highlight = if_else(key == highlight_key, TRUE, FALSE)) %>% 
+      left_join(geo() %>% select(key, Place), by = "key") %>% 
+      mutate(type = this_type)
+    
+    if(this_type == "State" & input$user_country == "US")
+      rows <- rows %>% mutate(Place = str_remove(Place, " State"))
+    
+    return(rows)
     
   })
   
