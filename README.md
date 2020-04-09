@@ -25,7 +25,7 @@ We have a second tab that explains how and why we do this.
 
 Our handling of geographic data is rough.  Our computation of nearby regions (distance) is hacky.
 
-Our handling of the axes for charts with missing, negative, or very large values is poor.
+Should give user a chance to set y limits for doubling over time.
 
 We need a better way to update the data on shinyapps.io.
 

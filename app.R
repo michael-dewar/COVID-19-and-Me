@@ -98,7 +98,7 @@ plot_value_vs_date_by_region <- function(df, plot_type = c("log", "raw", "doubli
            y = glue("Raw {metric}"))
   } else{
     plot <- plot + 
-      ylim(0,10) +
+      ylim(0,20) +
       labs(title = glue("Doubling Time by {type_string}"),
            subtitle = highlight_string,
            x = "Date",
