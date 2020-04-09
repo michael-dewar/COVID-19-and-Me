@@ -212,8 +212,8 @@ ui <- function(request) {
 
 server <- function(input, output, session) {
   
-  data <- reactiveFileReader(1000*60*3, session, "data2.feather", read_feather)
-  geo <- reactiveFileReader(1000*60*3, session, "geo2.feather", read_feather) 
+  data <- reactiveFileReader(1000*60*3, session, "data.feather", read_feather)
+  geo <- reactiveFileReader(1000*60*3, session, "geo.feather", read_feather) 
   neighbours <- reactiveFileReader(1000*60*3, session, "neighbours.feather", read_feather) 
   
   countries <- reactive({

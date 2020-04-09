@@ -23,11 +23,11 @@ We have a second tab that explains how and why we do this.
 
 ## Current Issues
 
-Our handling of geographic data is rough at best.  Our computation of nearby regions is hacky.  Our handing of overseas territories for US, United Kingdon, France, Netherlands, Denmark is terrible and breaks the charts for all nearby countries.
+Our handling of geographic data is rough.  Our computation of nearby regions (distance) is hacky.
 
 Our handling of the axes for charts with missing, negative, or very large values is poor.
 
-We need a way to update the data on shinyapps.io.
+We need a better way to update the data on shinyapps.io.
 
 There is no way to allow feedback from the user.
 

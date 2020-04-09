@@ -5,9 +5,9 @@ library(glue)
 library(feather)
 library(curl)
 
-tmp <- tempfile()
-curl_download("https://codeload.github.com/CSSEGISandData/COVID-19/tar.gz/master", tmp) 
-untar(tmp, files = "COVID-19-master/csse_covid_19_data/csse_covid_19_daily_reports")
+# tmp <- tempfile()
+# curl_download("https://codeload.github.com/CSSEGISandData/COVID-19/tar.gz/master", tmp)
+# untar(tmp, files = "COVID-19-master/csse_covid_19_data/csse_covid_19_daily_reports")
 
 daily_dir <- "COVID-19-master/csse_covid_19_data/csse_covid_19_daily_reports"
 
@@ -19,8 +19,6 @@ daily <- dir(daily_dir, "csv") %>%
               Confirmed, Deaths, Recovered, starts_with("Active"),
               starts_with("Lat"), starts_with("Long"))) %>% 
   bind_rows %>% 
-  #filter(is.na(Admin2)==FALSE) %>% 
-  filter(Date >= ymd("2020-03-22")) %>% 
   transmute(Date,
             Country = coalesce(`Country/Region`, Country_Region),
             Province = coalesce(`Province/State`, Province_State),
@@ -30,12 +28,39 @@ daily <- dir(daily_dir, "csv") %>%
             Confirmed, Deaths, Recovered, Active) %>% 
   replace_na(list(Confirmed = 0, Deaths = 0, Recovered =0)) %>% 
   pivot_longer(cols = Confirmed:Active, names_to = "Metric", values_to = "Value") %>% 
+  filter(Metric %in% c("Confirmed", "Deaths")) %>% 
   # On 2020-03-22 District of Columbia had two entries.  Fix this:
   group_by(Country, Province, County, Lat, Long, Metric, Date) %>% 
   summarize(Value = sum(Value, na.rm = TRUE)) %>% 
-  ungroup
+  ungroup %>% 
+  filter(Date >= ymd("2020-03-22"))
 
-no_territories <- daily %>% filter(is.na(Province))
+# There are many inconsistencies in the data before March 22.  Naming changed frequently.
+
+daily <- daily %>% 
+  mutate(County = if_else(Province == "Northern Mariana Islands", NA_character_, County))
+
+
+# No Territories ----------------------------------------------------------
+
+no_territories <- daily %>% filter(is.na(Province)) %>% 
+  mutate(Place = Country,
+         key = Country,
+         type = "Country")
+  
+no_territories_lat_long <- no_territories %>% 
+  filter(!is.na(Lat), !is.na(Long), Lat != 0, Long != 0) %>% 
+  group_by(key) %>%
+  arrange(Date) %>% 
+  filter(row_number() == n()) %>% 
+  select(-Metric, -Date, - Value)
+no_territories_lat_long
+
+no_territories_final <- no_territories %>% 
+  select(-Lat, -Long)
+
+
+# Territories -------------------------------------------------------------
 
 territories <- daily %>% 
   filter(is.na(County) == TRUE, is.na(Province) == FALSE) %>% 
@@ -43,88 +68,175 @@ territories <- daily %>%
   filter(!Province %in% c("Diamond Princess", "Grand Princess", "Recovered")) %>% 
   mutate(Province = str_replace_all(Province, "\\(Islas Malvinas\\)", "\\(Malvinas\\)")) %>% 
   mutate(Country = glue("{Province} ({Country})"),
-         Province = NA)
+         Province = NA) %>% 
+  group_by(Country) %>% 
+  mutate(Lat = median(Lat, na.rm = TRUE),
+         Long = median(Long, na.rm = TRUE),
+         Place = Country,
+         key = glue("{Country}"),
+         type = "Country",
+         Province = NA_character_,
+         County = NA_character_) %>% 
+  ungroup
 
-has_prov_state <- daily %>% 
-  filter(Country %in% c("Australia", "Canada", "China") | (Country == "US" & is.na(County) == FALSE) ) 
+territories
 
-has_prov_state_aggregated <- daily %>% 
-  filter(Country %in% c("Australia", "Canada", "China", "US")) %>% 
-  group_by(Country, Metric, Date) %>% 
-  summarise(Value = sum(Value, na.rm = TRUE),
-            Lat = mean(Lat, na.rm = TRUE),
-            Long = mean(Long, na.rm = TRUE)) %>% 
-  mutate(Province = "Overall",
-         County = if_else(Country == "US", "US Overall", NA_character_))
+# US ----------------------------------------------------------------------
 
-aggregated_states <- daily %>% 
-  filter(Country == "US") %>% 
-  group_by(Country, Province, Metric, Date) %>% 
-  summarise(Value = sum(Value, na.rm = TRUE),
-            Lat = mean(Lat, na.rm = TRUE),
-            Long = mean(Long, na.rm = TRUE)) %>% 
-  mutate(County = Province,
-         Province = "Overall")
+counties <- daily %>% 
+  filter(!is.na(County), Country == "US" ) %>% 
+  mutate(Place = County,
+         key = glue("{Country}, {Province}, {County}"),
+         type = "County") %>% 
+  group_by(key) %>% 
+  mutate(Lat = median(Lat, na.rm = TRUE),
+         Long = median(Long, na.rm = TRUE)) %>% 
+  ungroup
 
-daily <- bind_rows(has_prov_state, has_prov_state_aggregated, aggregated_states, territories, no_territories)
+states <- counties %>% 
+  group_by(Country, Province, Date, Metric) %>% 
+  summarize(Value = sum(Value, na.rm = TRUE),
+            Lat = median(Lat, na.rm = TRUE),
+            Long = median(Long, na.rm = TRUE)) %>% 
+  group_by(Country, Province) %>% 
+  mutate(Lat = median(Lat, na.rm = TRUE),
+         Long = median(Long, na.rm = TRUE),
+         Place = glue("{Province} State"),
+         key = glue("{Country}, {Province}"),
+         type = "State",
+         County = "All")
 
-write_feather(daily, "daily.feather")
+us <- states %>% 
+  group_by(Country, Date, Metric) %>% 
+  summarize(Value = sum(Value, na.rm = TRUE),
+            Lat = median(Lat, na.rm = TRUE),
+            Long = median(Long, na.rm = TRUE)) %>% 
+  group_by(Country) %>% 
+  mutate(Lat = median(Lat, na.rm = TRUE),
+         Long = median(Long, na.rm = TRUE),
+         Place = Country,
+         key = glue("{Country}"),
+         type = "Country",
+         Province = "All",
+         County = NA_character_)
+us
+states
+counties
 
-geo <- daily %>% 
-  group_by(Country, Province, County) %>% 
-  arrange(desc(Date)) %>% 
-  filter(row_number()==1) %>% 
-  ungroup %>% 
-  select(Country, Province, County, Lat, Long) %>% 
-  mutate(key = case_when(is.na(Province) ~ Country,
-                         is.na(County) ~ as.character(glue("{Country}, {Province}")),
-                         TRUE ~ as.character(glue("{Country}, {Province}, {County}")))) %>% 
-  filter(!is.na(Lat), !is.na(Long), Lat != 0, Long != 0)
-
-cross_keys <- function(df){
-  expand_grid(key = df$key, B_key = df$key) %>% 
+cross_keys <- function(df, type){
+  new <- expand_grid(key = df$key, B_key = df$key) %>% 
     left_join(df, by = "key") %>% 
     left_join(df %>% rename_with(~paste0("B_", .)), by = "B_key") %>% 
     mutate(distance = sqrt((Lat - B_Lat)^2 + (Long - B_Long)^2)) %>% 
-    group_by(key) %>% 
-    arrange(distance, .by_group = TRUE) %>% 
-    filter(row_number()<=20) %>% 
-    ungroup
+    select(key, neighbour_key = B_key, distance)
+    
+    if(type == "County"){
+      aggregate_keys <- df %>% 
+        transmute(key, neighbour_key = glue("{Country}, {Province}"), distance = 0)
+    } else if(type %in% c("State", "Province")) {
+      aggregate_keys <- df %>% 
+        transmute(key, neighbour_key = glue("{Country}"), distance = 0)
+    } else {
+      aggregate_keys <- new %>% filter(FALSE)
+    }
+  bind_rows(new, aggregate_keys) %>% 
+    filter(!is.na(distance)) %>% 
+    arrange(key, distance)
 }
 
-by_county <- geo %>% 
-  filter(!is.na(County)) %>% 
+
+geo_counties <- counties %>% 
+  ungroup %>% 
+  filter(!Province %in% c("Wuhan Evacuee"), str_to_lower(County) != "unassigned") %>% 
+  distinct(Country, Province, County, Place, key, type, Lat, Long) %>% 
   group_by(Province) %>% 
   group_split %>% 
-  map(cross_keys) %>% 
-  bind_rows %>% 
-  mutate(type = "County")
+  map(cross_keys, "County") %>% 
+  bind_rows
 
-by_province <- geo %>% 
-  filter(Country %in% c("Canada", "China")) %>% 
+geo_us_states <- states %>% 
+  ungroup %>% 
+  filter(!Province %in% c("Wuhan Evacuee"), str_to_lower(County) != "unassigned") %>% 
+  distinct(Country, Province, County, Place, key, type, Lat, Long) %>% 
   group_by(Country) %>% 
   group_split %>% 
-  map(cross_keys) %>% 
-  bind_rows %>% 
-  mutate(type = "Province")
+  map(cross_keys, "State") %>% 
+  bind_rows
+#geo_us_states %>% filter(str_starts(key, "US, Ohio"))
 
-by_state <- geo %>% 
-  filter(Country == "Australia") %>% 
-  cross_keys %>% 
-  mutate(type = "State")
 
-by_country <- geo %>% 
-  filter(is.na(County), !Country %in% c("Canada", "China", "Australia")) %>% 
-  cross_keys %>% 
-  mutate(type = "Country")
+# Australia, Canada, China ------------------------------------------------
 
-neighbours <- bind_rows(by_country, by_state, by_province, by_county)
+provinces <- daily %>% filter(Country %in% c("Australia", "Canada", "China")) %>% 
+  group_by(Country, Province) %>% 
+  mutate(Lat = median(Lat, na.rm = TRUE),
+         Long = median(Long, na.rm = TRUE),
+         Place = glue("{Province}"),
+         key = glue("{Country}, {Province}"),
+         type = if_else(Country == "Australia", "State", "Province")) %>% 
+  ungroup
+geo_provinces <- provinces %>% 
+  distinct(Country, Province, County, Place, key, type, Lat, Long) %>% 
+  filter(!is.na(Lat), !is.na(Long), Lat != 0, Long != 0) %>% 
+  group_by(Country) %>% 
+  group_split() %>% 
+  map(cross_keys, "State") %>% 
+  bind_rows
 
-neighbours %>% write_feather("geo.feather")
-daily %>% 
-  inner_join(geo %>% select(key, Country, Province, County), by = c("Country", "Province", "County")) %>% 
-  select(-Lat, -Long, -Country, -Province, -County) %>% 
-  write_feather("data.feather")
 
-rm(by_country, by_province, by_state, by_county, daily, geo, neighbours, daily_dir, cross_keys, tmp)
-rm(has_prov_state, has_prov_state_aggregated, territories, no_territories)
+geo_provinces %>% print(n=300)
+
+aus_can_chi <- provinces %>% 
+  group_by(Country, Metric, Date) %>% 
+  summarize(Value = sum(Value, na.rm = TRUE),
+            Lat = median(Lat, na.rm = TRUE),
+            Long = median(Long, na.rm = TRUE)) %>% 
+  group_by(Country) %>% 
+  mutate(Lat = mean(Lat, na.rm = TRUE),
+         Long = mean(Long, na.rm = TRUE),
+         Place = Country,
+         key = glue("{Country}"),
+         type = "Country",
+         Province = "All",
+         County = NA_character_)
+aus_can_chi %>% print(n=300)
+
+
+# Country Geo -------------------------------------------------------------
+
+geo_countries <- bind_rows(territories, no_territories, aus_can_chi, us) %>% 
+  group_by(Country, Province, County, Place, key, type) %>% 
+  summarize(Lat = mean(Lat, na.rm = TRUE),
+            Long = mean(Long, na.rm = TRUE)) %>% 
+  ungroup %>% 
+  cross_keys("Country")
+
+geo_countries
+# Combine -----------------------------------------------------------------
+
+neighbours <- bind_rows(geo_countries, geo_counties, geo_us_states, geo_provinces) %>% 
+  mutate(across(contains("key"), as.character))
+data_temp <- bind_rows(territories, no_territories, aus_can_chi, provinces, us, states, counties) %>%
+  select(-Lat, -Long) %>% 
+  mutate(across(c("Country", "Place", "key"), as.character)) %>% 
+  filter(!Province %in% c("Wuhan Evacuee", "Diamond Princess", "Grand Princess", "Recovered") | is.na(Province)) %>% 
+  filter(tolower(County) != "unassigned" | is.na(County))
+geo <- data_temp %>% distinct(Country, Province, County, key, Place, type)
+data <- data_temp %>% select(key, Date, Metric, Value)
+
+data %>% write_feather("data.feather")
+geo %>% write_feather("geo.feather")
+neighbours %>% write_feather("neighbours.feather")
+
+
+
+
+
+
+
+
+
+
+
+
+
