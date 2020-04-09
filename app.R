@@ -7,10 +7,11 @@ library(glue)
 library(lubridate)
 library(modelr)
 library(gitlink)
+library(writexl)
 
 # Functions ---------------------------------------------------------------
 
-add_doubling_time_to_filtered_df <- function(filtered_df, days = 7){
+add_doubling_time_to_filtered_df <- function(filtered_df, days){
   filtered_df %>% 
     group_by(key, Metric) %>% 
     filter(Value >1 ) %>% 
@@ -151,21 +152,32 @@ ui <- function(request) {
     column(4, uiOutput("user_country_ui")),
     column(4, uiOutput("user_province_ui")),
     column(4, uiOutput("user_county_ui"))),
-  #fluidRow(column(12, uiOutput("US_instructions_ui"))),
+  fluidRow(column(12, checkboxInput("unlock_advanced", "Unlock Advanced Settings"))),
   conditionalPanel("input.unlock_advanced == true",
   fluidRow(
-    column(4, numericInput("days", "Number of Days:", value = 7, min = 2, max = 14, step = 1), bookmarkButton()),
-    column(4, uiOutput("as_of_ui"), uiOutput("update_ui")),
-    column(4, selectInput("metric", "Metric:", choices = c("Confirmed", "Deaths", "Recovered", "Active")), 
-              numericInput("num_neighbours", "Number of Neighbours:", value = 20, min = 1, max = 30, step = 1))
+    column(4, numericInput("num_neighbours", "Number of Neighbours to Plot:", value = 20, min = 1, max = 30, step = 1)),
+    column(4, radioButtons("metric", "Type of Case:", choices = c("Confirmed", "Deaths"), selected = "Confirmed", inline = TRUE)),
+    column(4, numericInput("days", "Compute Doubling Time over X Days:", value = 5, min = 2, max = 14, step = 1),
+              uiOutput("as_of_ui"), uiOutput("update_ui"))
   )),
   tabsetPanel(
     tabPanel("Near Me",
-             p("The ",em("doubling time"), "is the time until the number of cases doubles.  It is better if it takes a long time until we have ",
+             h2("Current Doubling Period"),
+             p("The ",em("doubling Period"), "is the time until the number of cases doubles. It is better if it takes a long time until we have ",
                "more cases, and so longer lines are better in the graph below."),
              plotOutput("plot_doubling_time_by_region"),
              p("Raw data is from the",
-             a("Johns Hopkins University Center for Systems Science and Engineering", href="https://github.com/CSSEGISandData/COVID-19"))),
+             a("Johns Hopkins University Center for Systems Science and Engineering", href="https://github.com/CSSEGISandData/COVID-19")),
+             h2("Doubling Time Trend"),
+             p("As social distancing measures take effect, we should see a change in the doubling period over time. The chart below has the same ",
+               "regions as the chart above."),
+             plotOutput("plot_doubling2"),
+             p("You can get the table of values for this chart:", 
+               downloadButton("download_xlsx", "Download XLSX"), 
+               downloadButton("download_csv", "Download CSV"),
+               actionButton("view_table", "View Here")),
+             conditionalPanel("input.view_table % 2 == 1", tableOutput("doubling_by_region_over_time"))
+             ),
     tabPanel("Why/How",
              h2("The Problem With The Exponential Graph"),
              p("Looking at a graph of the number of COVID-19 cases is usually not very illuminating because:"), 
@@ -174,25 +186,25 @@ ui <- function(request) {
                       plotOutput("plot_raw"),
              p("We need to pay attention to the rate of growth."),
              h2("Log Scales Are Better"),
-             p("If we plot the number of cases using a log scale, then we can begin to see the difference between growth rates.",
-             "The slope of the curve represents the rate of growth.  You can see which places are growing fastest by looking at which ",
+             p("If we plot the number of cases using a log scale, then we can begin to see the difference between growth rates. ",
+             "The slope of the curve represents the rate of growth. You can see which places are growing fastest by looking at which ",
              "places have the steepest curve."),
                       plotOutput("plot_log"),
-             p("But it can be tricky to visually compare different slopes.  Moreover, the impact of the different slopes can be hard to ",
+             p("But it can be tricky to visually compare different slopes. Moreover, the impact of the different slopes can be hard to ",
              "appreciate."),
              h2("Doubling Time"),
              p("Since we want to look at the slope, we should actually just graph that directly."),
                       plotOutput("plot_doubling"),
              h2("How Do We Make This Graph?"),
-             p("There can be a lot of day-to-day variation in the growth rate.  We smooth this out by taking ",
-             "the most recent seven days, plotting the points on a log_2 scale, and then computing the line of best fit.  The slope of this ",
-             "line is the reciprocal of the doubling time."),
+             p("There can be a lot of day-to-day variation in the growth rate. We smooth this out by taking ",
+             "the most recent five days, plotting the points on a log_2 scale, and then computing the line of best fit. The slope of this ",
+             "line is the reciprocal of the doubling time. We clean up the doubling times by ignoring doubling times longer than 1000 days."),
                       plotOutput("plot_line_of_best_fit"),
-             p("Why seven days? If we take too few days, our computed doubling time will jump around a lot because of random variation. ",
-             "This noise can distract us from the underlying trend.  If you take too many days, then we will be slow to detect changes to the ",
-             "trend.  People change their behaviour quite quickly and we want to be able to see this.  You can try a different number of days ",
-             "by unlocking advanced settings:"),
-                      checkboxInput("unlock_advanced", "Unlock Advanced Settings")))
+             p("Why five days? If we take too few days, our computed doubling time will jump around a lot because of random variation. ",
+             "This noise can distract us from the underlying trend. If you take too many days, then we will be slow to detect changes to the ",
+             "trend. People change their behaviour quite quickly and we want to be able to see this. You can try a different number of days ",
+             "by unlocking advanced settings above."),
+                      ))
              )}
 
 
@@ -345,8 +357,42 @@ server <- function(input, output, session) {
   doubled <- reactive({
     req(data_to_plot())
     data_to_plot() %>% 
-      add_doubling_time_to_filtered_df(days = input$days)
+      add_doubling_time_to_filtered_df(days = input$days) %>% 
+      mutate(`Doubling Time` = case_when(`Doubling Time` >  1000 ~ Inf,
+                                         `Doubling Time` < -1000 ~ -Inf,
+                                         TRUE ~ `Doubling Time`))
   })
+  
+  data_for_export <- reactive({
+    req(doubled())
+
+    table <- doubled() %>%
+      ungroup %>% 
+      filter(Metric == input$metric) %>% 
+      select(-Data, -Model) %>% 
+      select(Place, Date, Value, `Doubling Time`) %>% 
+      pivot_longer(cols = c("Value", "Doubling Time"), names_to = "Metric") %>% 
+      pivot_wider(names_from = "Date", values_from = "value")
+    
+    
+    table
+    
+    value <- table %>% filter(Metric == "Value") %>% mutate(Metric = input$metric)
+    double <- table %>% filter(Metric == "Doubling Time")
+    inputs <- reactiveValuesToList(input) %>% 
+      bind_cols %>% 
+      as_tibble() %>% 
+      mutate_all(as.character) %>% 
+      pivot_longer(cols = everything(), names_to = "Input", values_to = "Choice")
+    
+    table <- list("Doubling Time" = double, "Cases" = value, "Inputs" = inputs)
+    
+    return(table)
+  })
+  
+  output$doubling_by_region_over_time <- renderTable({
+    data_for_export()$`Doubling Time`
+    })
   
   output$plot_raw <- renderPlot({
     req(doubled())
@@ -360,13 +406,43 @@ server <- function(input, output, session) {
   
   output$plot_doubling <- renderPlot({
     req(doubled())
-    doubled() %>% plot_value_vs_date_by_region(plot_type = "doubling")
+    doubled() %>% 
+      mutate(`Doubling Time` = case_when(`Doubling Time` >  1000 ~ Inf,
+                                         `Doubling Time` < -1000 ~ -Inf,
+                                         TRUE ~ `Doubling Time`)) %>% 
+      plot_value_vs_date_by_region(plot_type = "doubling")
   })
+  
+  output$plot_doubling2 <- renderPlot({
+    req(doubled())
+    doubled() %>% 
+      mutate(`Doubling Time` = case_when(`Doubling Time` >  1000 ~ Inf,
+                                         `Doubling Time` < -1000 ~ -Inf,
+                                         TRUE ~ `Doubling Time`)) %>% 
+      plot_value_vs_date_by_region(plot_type = "doubling")
+  })
+  
+  output$download_xlsx <- downloadHandler(
+    filename = function(){glue("COVID-19andMe_{today()}.xlsx")},
+    content = function(file){
+      data_for_export() %>% write_xlsx(file)
+    }
+  )
+  
+  output$download_csv <- downloadHandler(
+    filename = function(){glue("COVID-19andMe_{today()}.csv")},
+    content = function(file){
+      data_for_export()$`Doubling Time` %>% write_csv(file)
+    }
+  )
+  
+  
   
   output$plot_doubling_time_by_region <- renderPlot({
     req(doubled())
     #input$user_province
-    doubled() %>% plot_doubling_time_by_region(days = input$days, as_of = input$as_of)
+    doubled() %>% 
+      plot_doubling_time_by_region(days = input$days, as_of = input$as_of)
   })
   
   output$plot_line_of_best_fit <- renderPlot({
