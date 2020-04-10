@@ -5,9 +5,9 @@ library(glue)
 library(feather)
 library(curl)
 
-# tmp <- tempfile()
-# curl_download("https://codeload.github.com/CSSEGISandData/COVID-19/tar.gz/master", tmp)
-# untar(tmp, files = "COVID-19-master/csse_covid_19_data/csse_covid_19_daily_reports")
+tmp <- tempfile()
+curl_download("https://codeload.github.com/CSSEGISandData/COVID-19/tar.gz/master", tmp)
+untar(tmp, files = "COVID-19-master/csse_covid_19_data/csse_covid_19_daily_reports")
 
 daily_dir <- "COVID-19-master/csse_covid_19_data/csse_covid_19_daily_reports"
 
