@@ -205,8 +205,13 @@ ui <- function(request) {
              "This noise can distract us from the underlying trend. If you take too many days, then we will be slow to detect changes to the ",
              "trend. People change their behaviour quite quickly and we want to be able to see this. You can try a different number of days ",
              "by unlocking advanced settings above."),
-                      ))
-             )}
+                      ),
+    tabPanel("Mix'n'Match",
+             fluidRow(column(4,uiOutput("select_many_ui")),
+                      column(4, style = "margin-top: 25px;", bookmarkButton())),
+             plotOutput("select_many_doubling"),
+             plotOutput("select_many_log_cases")
+             )))}
 
 
 # Server ------------------------------------------------------------------
@@ -216,6 +221,44 @@ server <- function(input, output, session) {
   data <- reactiveFileReader(1000*60*3, session, "data.feather", read_feather)
   geo <- reactiveFileReader(1000*60*3, session, "geo.feather", read_feather) 
   neighbours <- reactiveFileReader(1000*60*3, session, "neighbours.feather", read_feather) 
+  
+  output$select_many_ui <- renderUI({
+    selectInput("select_many", "Select as many regions as you like:", choices = geo() %>% pull(key) %>% sort, multiple = TRUE)
+  })
+  
+  select_many_data <- reactive({
+    data() %>% 
+      filter(key %in% input$select_many,
+             Metric == input$metric) %>% 
+      add_doubling_time_to_filtered_df(days = input$days) %>% 
+      mutate(`Doubling Time` = case_when(`Doubling Time` >  1000 ~ Inf,
+                                         `Doubling Time` < -1000 ~ -Inf,
+                                         TRUE ~ `Doubling Time`)) %>% 
+      filter(is.na(`Doubling Time`) == FALSE)
+  })
+  output$select_many_doubling <- renderPlot({
+    select_many_data() %>% 
+      ggplot(aes(x = Date, color = key, y = `Doubling Time`)) + 
+      geom_line() +
+      scale_y_log10() +
+      #coord_flip() +
+      labs(title = "Doubling Time",
+           y = "Doubling Time, (Days)",
+           x = NULL,
+           color = NULL)
+  })
+  
+  output$select_many_log_cases <- renderPlot({
+    select_many_data() %>% 
+      ggplot(aes(x = Date, color = key, y = Value)) + 
+      geom_line() +
+      scale_y_log10() +
+      #coord_flip() +
+      labs(title = glue("{input$metric}"),
+           y = "Cases",
+           x = NULL,
+           color = "")
+  })
   
   countries <- reactive({
     geo() %>% distinct(Country)  %>% pull %>% sort
