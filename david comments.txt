@@ -1,0 +1,24 @@
+default overall
+
+checkbox for county
+state for real is confusing
+
+ui is subtly different in mobile vs desktop
+
+radio buttons look interesting
+radio or check to see choices
+
+metric: change to death/confirmed
+bookmark: drop or move
+
+get simpler url
+get custom domain:
+tld .today
+
+can add social media tags, seo
+
+visual style: text simplified and bury details; 
+
+matrix chart
+sparklines
+

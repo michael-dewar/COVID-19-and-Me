@@ -307,7 +307,7 @@ server <- function(input, output, session) {
   output$user_county_ui <- renderUI({
     req(counties())
     if(input$user_country == "US" & input$user_province != "All")
-      return(selectInput("user_county", "County", choices = counties(), selected = "All"))
+      return(selectInput("user_county", "County:", choices = counties(), selected = "All"))
     else
       return(NULL)
   })

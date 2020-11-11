@@ -1,0 +1,13 @@
+name: COVID-19-and-Me
+title: COVID-19-and-Me
+username:
+account: covid19andme
+server: shinyapps.io
+hostUrl: https://api.shinyapps.io/v1
+appId: 2478192
+bundleId: 3292246
+url: https://covid19andme.shinyapps.io/COVID-19-and-Me/
+when: 1592578349.38295
+asMultiple: FALSE
+asStatic: FALSE
+ignoredFiles: david comments.txt|README.md

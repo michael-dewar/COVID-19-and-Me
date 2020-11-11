@@ -5,9 +5,9 @@ account: covid19andme
 server: shinyapps.io
 hostUrl: https://api.shinyapps.io/v1
 appId: 2079196
-bundleId: 2994815
+bundleId: 3487264
 url: https://covid19andme.shinyapps.io/COVID-19andMe/
-when: 1586488689.43215
+when: 1596811600.06561
 asMultiple: FALSE
 asStatic: FALSE
-ignoredFiles: LICENSE|README.md
+ignoredFiles: david comments.txt|LICENSE|README.md
